@@ -1,0 +1,93 @@
+#!/bin/bash
+
+VPC_ID="<VPC_ID>"
+OUTPUT_FILE="security_groups.tf"
+echo "# Auto-generated Security Groups for VPC $VPC_ID" > $OUTPUT_FILE
+
+SG_INFO=$(aws --profile <PROFILE> --region us-west-2 ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" --output json)
+
+echo $SG_INFO | jq -c '.SecurityGroups[]' | while read SG; do
+    SG_ID=$(echo $SG | jq -r '.GroupId')
+    SG_NAME=$(echo $SG | jq -r '.GroupName' | sed 's/[^a-zA-Z0-9_-]/_/g')
+
+    # Add a random number to the resource name
+    RANDOM_SUFFIX=$(gshuf -i 1000-9999 -n 1)
+    UNIQUE_SG_NAME="${SG_NAME}_${RANDOM_SUFFIX}"
+
+    cat <<EOF >> $OUTPUT_FILE
+
+resource "aws_security_group" "$UNIQUE_SG_NAME" {
+  name        = "$SG_NAME"
+  description = "$(echo $SG | jq -r '.Description')"
+  vpc_id      = "$VPC_ID"
+
+  tags = {
+    Name = "$SG_NAME"
+  }
+}
+EOF
+
+    terraform import aws_security_group.$UNIQUE_SG_NAME $SG_ID
+
+    # Ingress Rules
+    RULES=$(aws --profile <PROFILE> --region us-west-2 ec2 describe-security-groups --group-ids $SG_ID --query "SecurityGroups[0].IpPermissions")
+    echo $RULES | jq -c '.[]' | while read RULE; do
+        FROM_PORT=$(echo $RULE | jq -r '.FromPort // 0')
+        TO_PORT=$(echo $RULE | jq -r '.ToPort // 0')
+        PROTOCOL=$(echo $RULE | jq -r '.IpProtocol')
+        CIDR=$(echo $RULE | jq -r '.IpRanges[0].CidrIp // empty')
+
+        # Generate a unique random number for each ingress rule
+        RULE_RANDOM_SUFFIX=$(gshuf -i 1000-9999 -n 1)
+
+        if [ ! -z "$CIDR" ]; then
+            cat <<EOF >> $OUTPUT_FILE
+
+resource "aws_security_group_rule" "${UNIQUE_SG_NAME}_ingress_${PROTOCOL}_${FROM_PORT}_${TO_PORT}_${RULE_RANDOM_SUFFIX}" {
+  type              = "ingress"
+  from_port         = $FROM_PORT
+  to_port           = $TO_PORT
+  protocol          = "$PROTOCOL"
+  cidr_blocks       = ["$CIDR"]
+  security_group_id = aws_security_group.$UNIQUE_SG_NAME.id
+}
+EOF
+
+            # Importing ingress rules with the correct format
+            IMPORT_ID="${SG_ID}_ingress_${PROTOCOL}_${FROM_PORT}_${TO_PORT}_${CIDR}"
+            terraform import aws_security_group_rule.${UNIQUE_SG_NAME}_ingress_${PROTOCOL}_${FROM_PORT}_${TO_PORT}_${RULE_RANDOM_SUFFIX} "$IMPORT_ID"
+        fi
+    done
+
+    # Egress Rules
+    EGRESS_RULES=$(aws --profile <PROFILE> --region us-west-2 ec2 describe-security-groups --group-ids $SG_ID --query "SecurityGroups[0].IpPermissionsEgress")
+    echo $EGRESS_RULES | jq -c '.[]' | while read RULE; do
+        FROM_PORT=$(echo $RULE | jq -r '.FromPort // 0')
+        TO_PORT=$(echo $RULE | jq -r '.ToPort // 0')
+        PROTOCOL=$(echo $RULE | jq -r '.IpProtocol')
+        CIDR=$(echo $RULE | jq -r '.IpRanges[0].CidrIp // empty')
+
+        # Generate a unique random number for each egress rule
+        RULE_RANDOM_SUFFIX=$(gshuf -i 1000-9999 -n 1)
+
+        if [ ! -z "$CIDR" ]; then
+            cat <<EOF >> $OUTPUT_FILE
+
+resource "aws_security_group_rule" "${UNIQUE_SG_NAME}_egress_${PROTOCOL}_${FROM_PORT}_${TO_PORT}_${RULE_RANDOM_SUFFIX}" {
+  type              = "egress"
+  from_port         = $FROM_PORT
+  to_port           = $TO_PORT
+  protocol          = "$PROTOCOL"
+  cidr_blocks       = ["$CIDR"]
+  security_group_id = aws_security_group.$UNIQUE_SG_NAME.id
+}
+EOF
+
+            # Importing egress rules with the correct format
+            IMPORT_ID="${SG_ID}_egress_${PROTOCOL}_${FROM_PORT}_${TO_PORT}_${CIDR}"
+            terraform import aws_security_group_rule.${UNIQUE_SG_NAME}_egress_${PROTOCOL}_${FROM_PORT}_${TO_PORT}_${RULE_RANDOM_SUFFIX} "$IMPORT_ID"
+        fi
+    done
+done
+
+echo "✅ Terraform config updated in $OUTPUT_FILE"

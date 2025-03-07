@@ -1,0 +1,28 @@
+# Define the Docker image to be used (update with your registry and image details)
+IMAGE="your-docker-registry.com/your-organization/your-app:latest"
+
+# Pull the latest version of the image from the registry
+sudo docker pull $IMAGE
+
+# Check if a container running this application already exists
+ContainerCheck=$(docker ps -a | grep your-app | awk '{print $1}')
+
+# If a container exists, stop and remove it
+if [ ! -z "$ContainerCheck" ]; then
+  echo "Existing container ID: $ContainerCheck"
+  echo "Stopping container: $ContainerCheck"
+  docker stop $ContainerCheck
+  echo "Removing container: $ContainerCheck"
+  docker rm $ContainerCheck
+fi
+
+# Run a new container with the specified configurations
+sudo docker run -d \
+ -v /path/to/config.properties:/app/config/production/application.properties \  # Mount the application config file
+ -v /path/to/logs:/opt/log \  # Mount log directory
+ -v /path/to/logging-config.xml:/app/config/production/logback.xml \  # Mount logging configuration file
+ -e ENVIRONMENT=production \  # Set environment variable
+ --privileged \  # Run the container in privileged mode
+ --restart=always \  # Ensure the container restarts if it crashes
+ -p 9703:9703 \  # Map port 9703 from the container to the host
+ $IMAGE  # Use the specified Docker image
