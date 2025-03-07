@@ -1,3 +1,5 @@
+#!/bin/bash
+
 # Define the Docker image to be used (update with your registry and image details)
 IMAGE="your-docker-registry.com/your-organization/your-app:latest"
 
